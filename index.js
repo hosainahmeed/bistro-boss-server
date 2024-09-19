@@ -8,10 +8,7 @@ require("dotenv").config();
 
 const uri = process.env.DB_URI;
 
-const client = new MongoClient(uri, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+const client = new MongoClient(uri);
 
 app.use(cors());
 app.use(express.json());
@@ -68,7 +65,23 @@ async function run() {
       }
     });
 
-    app.post("/users", verifyToken, async (req, res) => {
+    app.post("/menu", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const item = req.body;
+        const result = await menuCollection.insertOne(item);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: "Failed to fetch menu items" });
+      }
+    });
+    app.delete("/menu/:id", verifyToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await menuCollection.deleteOne(query);
+      res.send(result);
+    });
+
+    app.post("/users", async (req, res) => {
       const user = req.body;
       const query = { email: user.email };
       const existingUser = await usersCollection.findOne(query);
@@ -91,8 +104,6 @@ async function run() {
       const user = await usersCollection.findOne(query);
       let admin = false;
       if (user) {
-        console.log("ssahdg");
-
         admin = user?.role === "admin";
       }
       res.send({ admin });
@@ -186,5 +197,3 @@ app.get("/", (req, res) => {
 app.listen(port, () => {
   console.log(`Server is running on ${port}`);
 });
-
-
