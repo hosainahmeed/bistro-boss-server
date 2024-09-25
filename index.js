@@ -13,9 +13,12 @@ const client = new MongoClient(uri);
 app.use(cors());
 app.use(express.json());
 
+// Connect to the database
 async function run() {
   try {
     await client.connect();
+    console.log("Connected to MongoDB");
+    
     const menuCollection = client.db("bistroDb").collection("menu");
     const reviewCollection = client.db("bistroDb").collection("review");
     const cartCollection = client.db("bistroDb").collection("carts");
@@ -52,7 +55,7 @@ async function run() {
       const user = await usersCollection.findOne(query);
       const isAdmin = user?.role === "admin";
       if (!isAdmin) {
-        return res.status(403).send({ message: "forbidden access" });
+        return res.status(403).send({ message: "Forbidden access" });
       }
       next();
     };
@@ -67,15 +70,18 @@ async function run() {
       }
     });
 
+    // Add a menu item (Admin only)
     app.post("/menu", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const item = req.body;
         const result = await menuCollection.insertOne(item);
         res.send(result);
       } catch (error) {
-        res.status(500).send({ error: "Failed to fetch menu items" });
+        res.status(500).send({ error: "Failed to add menu item" });
       }
     });
+
+    // Delete a menu item (Admin only)
     app.delete("/menu/:id", verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
@@ -83,7 +89,7 @@ async function run() {
       res.send(result);
     });
 
-    // payment intents
+    // Create a payment intent
     app.post("/create-checkout-session", verifyToken, async (req, res) => {
       const { price } = req.body;
       const amount = parseInt(price * 100);
@@ -95,8 +101,7 @@ async function run() {
       res.send({ clientSecret: paymentIntent.client_secret });
     });
 
-    //payment information api
-
+    // Add a user
     app.post("/users", async (req, res) => {
       const user = req.body;
       const query = { email: user.email };
@@ -109,11 +114,10 @@ async function run() {
     });
 
     // Check if user is admin
-
     app.get("/users/admin/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
       if (email !== req.decoded.email) {
-        return res.status(403).send({ message: "forbidden message" });
+        return res.status(403).send({ message: "Forbidden access" });
       }
       const query = { email: email };
       const user = await usersCollection.findOne(query);
@@ -125,24 +129,20 @@ async function run() {
     });
 
     // Promote user to admin
-    app.patch("/users/admin/:id", async (req, res) => {
-      try {
-        const id = req.params.id;
-        const filter = { _id: new ObjectId(id) };
-        const updateDoc = {
-          $set: {
-            role: "admin",
-          },
-        };
-        const result = await usersCollection.updateOne(filter, updateDoc);
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ error: "Failed to update user" });
-      }
+    app.patch("/users/admin/:id", verifyToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          role: "admin",
+        },
+      };
+      const result = await usersCollection.updateOne(filter, updateDoc);
+      res.send(result);
     });
 
-    // Delete admin
-    app.delete("/users/admin/:id", async (req, res) => {
+    // Delete a user (Admin only)
+    app.delete("/users/admin/:id", verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await usersCollection.deleteOne(query);
@@ -150,7 +150,7 @@ async function run() {
     });
 
     // Get all users
-    app.get("/users", async (req, res) => {
+    app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const result = await usersCollection.find().toArray();
         res.send(result);
@@ -159,11 +159,11 @@ async function run() {
       }
     });
 
+    // Add payment information
     app.post("/payments", async (req, res) => {
       const payment = req.body;
       const paymentResult = await paymentCollection.insertOne(payment);
-      //  carefully delete each item from the cart
-      console.log("payment info", payment);
+      // Carefully delete each item from the cart
       const query = {
         _id: {
           $in: payment.cartIds.map((id) => new ObjectId(id)),
@@ -184,24 +184,26 @@ async function run() {
       res.send(result);
     });
 
+    // Get admin statistics
     app.get("/admin-stats", verifyToken, verifyAdmin, async (req, res) => {
       const users = await usersCollection.estimatedDocumentCount();
       const products = await menuCollection.estimatedDocumentCount();
       const orders = await paymentCollection.estimatedDocumentCount();
       const payments = await paymentCollection.find().toArray();
-      const revinew = payments.reduce(
+      const revenue = payments.reduce(
         (total, payment) => total + payment.price,
         0
       );
 
       res.send({
-        revinew,
+        revenue,
         orders,
         users,
         products,
       });
     });
 
+    // Get order statistics
     app.get("/order-stats", verifyToken, verifyAdmin, async (req, res) => {
       const result = await paymentCollection
         .aggregate([
@@ -265,11 +267,14 @@ async function run() {
         res.status(500).send({ error: "Failed to add item to cart" });
       }
     });
+  } catch (error) {
+    console.error("Error connecting to the database", error);
   } finally {
     // Keeping the connection open for the server lifecycle
   }
 }
 
+// Start the database connection and server
 run().catch(console.dir);
 
 app.get("/", (req, res) => {
@@ -277,5 +282,5 @@ app.get("/", (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Server is running on ${port}`);
+  console.log(`Server is running on port ${port}`);
 });
