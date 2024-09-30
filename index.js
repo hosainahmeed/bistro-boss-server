@@ -2,13 +2,19 @@ const express = require("express");
 const app = express();
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
-const { MongoClient, ObjectId } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const port = process.env.PORT || 5000;
 require("dotenv").config();
 const stripe = require("stripe")(process.env.PAYMENT_SECRET_KEY);
 const uri = process.env.DB_URI;
 
-const client = new MongoClient(uri);
+const client = new MongoClient(uri, {
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  },
+});
 
 app.use(cors());
 app.use(express.json());
@@ -18,7 +24,7 @@ async function run() {
   try {
     await client.connect();
     console.log("Connected to MongoDB");
-    
+
     const menuCollection = client.db("bistroDb").collection("menu");
     const reviewCollection = client.db("bistroDb").collection("review");
     const cartCollection = client.db("bistroDb").collection("carts");
@@ -29,7 +35,7 @@ async function run() {
     app.post("/jwt", (req, res) => {
       const user = req.body;
       const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
-        expiresIn: "100h",
+        expiresIn: "1h",
       });
       res.send({ token });
     });
@@ -62,6 +68,7 @@ async function run() {
 
     // Get menu items
     app.get("/menu", async (req, res) => {
+      console.log("Menu endpoint hit");
       try {
         const result = await menuCollection.find().toArray();
         res.send(result);
@@ -129,25 +136,35 @@ async function run() {
     });
 
     // Promote user to admin
-    app.patch("/users/admin/:id", verifyToken, verifyAdmin, async (req, res) => {
-      const id = req.params.id;
-      const filter = { _id: new ObjectId(id) };
-      const updateDoc = {
-        $set: {
-          role: "admin",
-        },
-      };
-      const result = await usersCollection.updateOne(filter, updateDoc);
-      res.send(result);
-    });
+    app.patch(
+      "/users/admin/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const filter = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            role: "admin",
+          },
+        };
+        const result = await usersCollection.updateOne(filter, updateDoc);
+        res.send(result);
+      }
+    );
 
     // Delete a user (Admin only)
-    app.delete("/users/admin/:id", verifyToken, verifyAdmin, async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await usersCollection.deleteOne(query);
-      res.send(result);
-    });
+    app.delete(
+      "/users/admin/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await usersCollection.deleteOne(query);
+        res.send(result);
+      }
+    );
 
     // Get all users
     app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
@@ -161,16 +178,47 @@ async function run() {
 
     // Add payment information
     app.post("/payments", async (req, res) => {
-      const payment = req.body;
-      const paymentResult = await paymentCollection.insertOne(payment);
-      // Carefully delete each item from the cart
-      const query = {
-        _id: {
-          $in: payment.cartIds.map((id) => new ObjectId(id)),
-        },
-      };
-      const deleteResult = await cartCollection.deleteMany(query);
-      res.send({ paymentResult, deleteResult });
+      try {
+        const payment = req.body;
+
+        // Check if `cartIds` is an array and contains valid data
+        if (
+          !payment.cartIds ||
+          !Array.isArray(payment.cartIds) ||
+          payment.cartIds.length === 0
+        ) {
+          return res.status(400).send({
+            error: "Invalid cartIds: cartIds must be a non-empty array",
+          });
+        }
+
+        // Insert the payment into the database
+        const paymentResult = await paymentCollection.insertOne(payment);
+
+        // Carefully delete each item from the cart
+        const query = {
+          _id: {
+            $in: payment.cartIds.map((id) => new ObjectId(String(id))), // Ensure ids are valid ObjectId strings
+          },
+        };
+
+        const deleteResult = await cartCollection.deleteMany(query);
+
+        console.log("Payment endpoint hit successfully", {
+          paymentResult,
+          deleteResult,
+        });
+
+        // Send the result back to the client
+        res.status(200).send({ paymentResult, deleteResult });
+      } catch (error) {
+        console.error("Error at payment endpoint:", error);
+
+        // Handle any unexpected errors
+        res
+          .status(500)
+          .send({ error: "An error occurred while processing the payment" });
+      }
     });
 
     // Get carts by user email
