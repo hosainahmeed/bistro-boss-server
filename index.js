@@ -1,18 +1,16 @@
 const express = require("express");
-const app = express();
 const cors = require("cors");
-
 const jwt = require("jsonwebtoken");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-
 require("dotenv").config();
 
+const app = express();
 app.use(cors());
 app.use(express.json());
+
 const stripe = require("stripe")(process.env.PAYMENT_SECRET_KEY);
 const uri = process.env.DB_URI;
 const port = process.env.PORT || 5000;
-console.log("db uri",uri)
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -23,206 +21,169 @@ const client = new MongoClient(uri, {
   ssl: true,
 });
 
+// Middleware for JWT verification
+const verifyToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ message: "Unauthorized access" });
+  }
 
-// Connect to the database
+  const token = authHeader.split(" ")[1];
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).json({ message: "Unauthorized access" });
+    }
+    req.decoded = decoded;
+    next();
+  });
+};
+
+// Middleware to verify admin role
+const verifyAdmin = async (req, res, next) => {
+  const user = await client.db("bistroDb").collection("users").findOne({ email: req.decoded.email });
+  if (!user || user.role !== "admin") {
+    return res.status(403).json({ message: "Forbidden access" });
+  }
+  next();
+};
+
+// Connect to the database and define API routes
 async function run() {
   try {
     await client.connect();
     console.log("Connected to MongoDB");
 
-    const menuCollection = client.db("bistroDb").collection("menu");
-    const reviewCollection = client.db("bistroDb").collection("review");
-    const cartCollection = client.db("bistroDb").collection("carts");
-    const usersCollection = client.db("bistroDb").collection("users");
-    const paymentCollection = client.db("bistroDb").collection("payments");
+    const db = client.db("bistroDb");
+    const menuCollection = db.collection("menu");
+    const reviewCollection = db.collection("review");
+    const cartCollection = db.collection("carts");
+    const usersCollection = db.collection("users");
+    const paymentCollection = db.collection("payments");
 
-    // JWT Token Generation
+    // Generate JWT token
     app.post("/jwt", (req, res) => {
-      const user = req.body;
-      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
-        expiresIn: "1h",
-      });
-      res.send({ token });
+      const token = jwt.sign(req.body, process.env.ACCESS_TOKEN_SECRET, { expiresIn: "1h" });
+      res.json({ token });
     });
-
-    // JWT Verification Middleware
-    const verifyToken = (req, res, next) => {
-      if (!req.headers.authorization) {
-        return res.status(401).send({ message: "Unauthorized access" });
-      }
-      const token = req.headers.authorization.split(" ")[1];
-      jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
-        if (err) {
-          return res.status(401).send({ message: "Unauthorized access" });
-        }
-        req.decoded = decoded;
-        next();
-      });
-    };
-
-    const verifyAdmin = async (req, res, next) => {
-      const email = req.decoded.email;
-      const query = { email: email };
-      const user = await usersCollection.findOne(query);
-      const isAdmin = user?.role === "admin";
-      if (!isAdmin) {
-        return res.status(403).send({ message: "Forbidden access" });
-      }
-      next();
-    };
 
     // Get menu items
     app.get("/menu", async (req, res) => {
-      console.log("Menu endpoint hit");
       try {
-        const result = await menuCollection.find().toArray();
-        res.send(result);
+        const menuItems = await menuCollection.find().toArray();
+        res.json(menuItems);
       } catch (error) {
-        res.status(500).send({ error: "Failed to fetch menu items" });
+        console.error("Error fetching menu items:", error);
+        res.status(500).json({ error: "Failed to fetch menu items" });
       }
     });
 
     // Add a menu item (Admin only)
     app.post("/menu", verifyToken, verifyAdmin, async (req, res) => {
       try {
-        const item = req.body;
-        const result = await menuCollection.insertOne(item);
-        res.send(result);
+        const result = await menuCollection.insertOne(req.body);
+        res.json(result);
       } catch (error) {
-        res.status(500).send({ error: "Failed to add menu item" });
+        console.error("Error adding menu item:", error);
+        res.status(500).json({ error: "Failed to add menu item" });
       }
     });
 
     // Delete a menu item (Admin only)
     app.delete("/menu/:id", verifyToken, verifyAdmin, async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await menuCollection.deleteOne(query);
-      res.send(result);
+      try {
+        const result = await menuCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+        res.json(result);
+      } catch (error) {
+        console.error("Error deleting menu item:", error);
+        res.status(500).json({ error: "Failed to delete menu item" });
+      }
     });
 
     // Create a payment intent
     app.post("/create-checkout-session", verifyToken, async (req, res) => {
       const { price } = req.body;
-      const amount = parseInt(price * 100);
-      const paymentIntent = await stripe.paymentIntents.create({
-        amount: amount,
-        currency: "usd",
-        payment_method_types: ["card"],
-      });
-      res.send({ clientSecret: paymentIntent.client_secret });
+      try {
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: Math.round(price * 100),
+          currency: "usd",
+          payment_method_types: ["card"],
+        });
+        res.json({ clientSecret: paymentIntent.client_secret });
+      } catch (error) {
+        console.error("Error creating payment intent:", error);
+        res.status(500).json({ error: "Failed to create payment intent" });
+      }
     });
 
-    // Add a user
+    // User registration
     app.post("/users", async (req, res) => {
       const user = req.body;
-      const query = { email: user.email };
-      const existingUser = await usersCollection.findOne(query);
-      if (existingUser) {
-        return res.send({ message: "User already exists!" });
+      try {
+        const existingUser = await usersCollection.findOne({ email: user.email });
+        if (existingUser) {
+          return res.status(400).json({ message: "User already exists!" });
+        }
+        const result = await usersCollection.insertOne(user);
+        res.json(result);
+      } catch (error) {
+        console.error("Error adding user:", error);
+        res.status(500).json({ error: "Failed to add user" });
       }
-      const result = await usersCollection.insertOne(user);
-      res.send(result);
     });
 
     // Check if user is admin
     app.get("/users/admin/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
       if (email !== req.decoded.email) {
-        return res.status(403).send({ message: "Forbidden access" });
+        return res.status(403).json({ message: "Forbidden access" });
       }
-      const query = { email: email };
-      const user = await usersCollection.findOne(query);
-      let admin = false;
-      if (user) {
-        admin = user?.role === "admin";
-      }
-      res.send(admin);
+
+      const user = await usersCollection.findOne({ email });
+      res.json({ admin: user?.role === "admin" });
     });
 
     // Promote user to admin
-    app.patch(
-      "/users/admin/:id",
-      verifyToken,
-      verifyAdmin,
-      async (req, res) => {
-        const id = req.params.id;
-        const filter = { _id: new ObjectId(id) };
-        const updateDoc = {
-          $set: {
-            role: "admin",
-          },
-        };
-        const result = await usersCollection.updateOne(filter, updateDoc);
-        res.send(result);
-      }
-    );
+    app.patch("/users/admin/:id", verifyToken, verifyAdmin, async (req, res) => {
+      const result = await usersCollection.updateOne(
+        { _id: new ObjectId(req.params.id) },
+        { $set: { role: "admin" } }
+      );
+      res.json(result);
+    });
 
     // Delete a user (Admin only)
-    app.delete(
-      "/users/admin/:id",
-      verifyToken,
-      verifyAdmin,
-      async (req, res) => {
-        const id = req.params.id;
-        const query = { _id: new ObjectId(id) };
-        const result = await usersCollection.deleteOne(query);
-        res.send(result);
-      }
-    );
+    app.delete("/users/admin/:id", verifyToken, verifyAdmin, async (req, res) => {
+      const result = await usersCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+      res.json(result);
+    });
 
     // Get all users
     app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
       try {
-        const result = await usersCollection.find().toArray();
-        res.send(result);
+        const users = await usersCollection.find().toArray();
+        res.json(users);
       } catch (error) {
-        res.status(500).send({ error: "Failed to fetch users" });
+        console.error("Error fetching users:", error);
+        res.status(500).json({ error: "Failed to fetch users" });
       }
     });
 
     // Add payment information
     app.post("/payments", async (req, res) => {
+      const payment = req.body;
+      if (!Array.isArray(payment.cartIds) || payment.cartIds.length === 0) {
+        return res.status(400).json({ error: "Invalid cartIds: must be a non-empty array" });
+      }
+
       try {
-        const payment = req.body;
-
-        // Check if `cartIds` is an array and contains valid data
-        if (
-          !payment.cartIds ||
-          !Array.isArray(payment.cartIds) ||
-          payment.cartIds.length === 0
-        ) {
-          return res.status(400).send({
-            error: "Invalid cartIds: cartIds must be a non-empty array",
-          });
-        }
-
-        // Insert the payment into the database
         const paymentResult = await paymentCollection.insertOne(payment);
-
-        // Carefully delete each item from the cart
-        const query = {
-          _id: {
-            $in: payment.cartIds.map((id) => new ObjectId(String(id))), // Ensure ids are valid ObjectId strings
-          },
-        };
-
-        const deleteResult = await cartCollection.deleteMany(query);
-
-        console.log("Payment endpoint hit successfully", {
-          paymentResult,
-          deleteResult,
+        const deleteResult = await cartCollection.deleteMany({
+          _id: { $in: payment.cartIds.map((id) => new ObjectId(id)) },
         });
-
-        // Send the result back to the client
-        res.status(200).send({ paymentResult, deleteResult });
+        res.status(200).json({ paymentResult, deleteResult });
       } catch (error) {
-        console.error("Error at payment endpoint:", error);
-
-        // Handle any unexpected errors
-        res
-          .status(500)
-          .send({ error: "An error occurred while processing the payment" });
+        console.error("Error processing payment:", error);
+        res.status(500).json({ error: "Failed to process payment" });
       }
     });
 
@@ -230,30 +191,24 @@ async function run() {
     app.get("/carts", async (req, res) => {
       const email = req.query.email;
       if (!email) {
-        return res.send([]);
+        return res.json([]);
       }
-      const query = { email: email };
-      const result = await cartCollection.find(query).toArray();
-      res.send(result);
+      const carts = await cartCollection.find({ email }).toArray();
+      res.json(carts);
     });
 
     // Get admin statistics
     app.get("/admin-stats", verifyToken, verifyAdmin, async (req, res) => {
-      const users = await usersCollection.estimatedDocumentCount();
-      const products = await menuCollection.estimatedDocumentCount();
-      const orders = await paymentCollection.estimatedDocumentCount();
-      const payments = await paymentCollection.find().toArray();
-      const revenue = payments.reduce(
-        (total, payment) => total + payment.price,
-        0
-      );
+      const [users, products, orders] = await Promise.all([
+        usersCollection.estimatedDocumentCount(),
+        menuCollection.estimatedDocumentCount(),
+        paymentCollection.estimatedDocumentCount(),
+      ]);
 
-      res.send({
-        revenue,
-        orders,
-        users,
-        products,
-      });
+      const payments = await paymentCollection.find().toArray();
+      const revenue = payments.reduce((total, payment) => total + payment.price, 0);
+
+      res.json({ revenue, orders, users, products });
     });
 
     // Get order statistics
@@ -268,9 +223,7 @@ async function run() {
               as: "menuItems",
             },
           },
-          {
-            $unwind: "$menuItems",
-          },
+          { $unwind: "$menuItems" },
           {
             $group: {
               _id: "$menuItems.category",
@@ -288,52 +241,49 @@ async function run() {
           },
         ])
         .toArray();
-
-      res.send(result);
+      res.json(result);
     });
 
     // Delete a cart item
     app.delete("/carts/:id", async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await cartCollection.deleteOne(query);
-      res.send(result);
+      try {
+        const result = await cartCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+        res.json(result);
+      } catch (error) {
+        console.error("Error deleting cart item:", error);
+        res.status(500).json({ error: "Failed to delete cart item" });
+      }
     });
 
     // Get all reviews
     app.get("/review", async (req, res) => {
       try {
-        const result = await reviewCollection.find().toArray();
-        res.send(result);
+        const reviews = await reviewCollection.find().toArray();
+        res.json(reviews);
       } catch (error) {
-        res.status(500).send({ error: "Failed to fetch reviews" });
+        console.error("Error fetching reviews:", error);
+        res.status(500).json({ error: "Failed to fetch reviews" });
       }
     });
 
-    // Add item to cart
-    app.post("/carts", async (req, res) => {
+    // Add a review
+    app.post("/review", async (req, res) => {
       try {
-        const item = req.body;
-        const result = await cartCollection.insertOne(item);
-        res.send(result);
+        const result = await reviewCollection.insertOne(req.body);
+        res.json(result);
       } catch (error) {
-        res.status(500).send({ error: "Failed to add item to cart" });
+        console.error("Error adding review:", error);
+        res.status(500).json({ error: "Failed to add review" });
       }
     });
+
   } catch (error) {
-    console.error("Error connecting to the database", error);
-  } finally {
-    // Keeping the connection open for the server lifecycle
+    console.error("Failed to connect to MongoDB:", error);
   }
 }
 
-// Start the database connection and server
-run().catch(console.dir);
-
-app.get("/", (req, res) => {
-  res.send("Server is running");
-});
-
+// Start the server and database connection
 app.listen(port, () => {
+  run().catch(console.error);
   console.log(`Server is running on port ${port}`);
 });
