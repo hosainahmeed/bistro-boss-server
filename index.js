@@ -23,6 +23,10 @@ const client = new MongoClient(uri, {
   ssl: true,
 });
 
+// Improve database connection logging
+client.connect()
+  .then(() => console.log("Connected to MongoDB"))
+  .catch(err => console.error("Failed to connect to MongoDB", err));
 
 // Connect to the database
 async function run() {
@@ -76,9 +80,13 @@ async function run() {
       console.log("Menu endpoint hit");
       try {
         const result = await menuCollection.find().toArray();
+        if (result.length === 0) {
+          return res.status(404).send({ message: "No menu items found" });
+        }
         res.send(result);
       } catch (error) {
-        res.status(500).send({ error: "Failed to fetch menu items" });
+        console.error("Error fetching menu items:", error);
+        res.status(500).send({ error: "Failed to fetch menu items", details: error.message });
       }
     });
 
@@ -333,6 +341,13 @@ run().catch(console.dir);
 app.get("/", (req, res) => {
   res.send("Server is running");
 });
+
+// Improve CORS configuration
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' 
+    ? 'https://your-frontend-domain.com' 
+    : 'http://localhost:3000'
+}));
 
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
