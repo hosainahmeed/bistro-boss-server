@@ -332,6 +332,7 @@ async function run() {
     console.error("Error connecting to the database", error);
   } finally {
     // Keeping the connection open for the server lifecycle
+    
   }
 }
 
@@ -342,12 +343,6 @@ app.get("/", (req, res) => {
   res.send("Server is running");
 });
 
-// Improve CORS configuration
-app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? 'https://your-frontend-domain.com' 
-    : 'http://localhost:3000'
-}));
 
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
