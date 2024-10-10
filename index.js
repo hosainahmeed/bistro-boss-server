@@ -3,15 +3,15 @@ const app = express();
 const cors = require("cors");
 
 const jwt = require("jsonwebtoken");
-const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-
 require("dotenv").config();
+const stripe = require("stripe")(process.env.PAYMENT_SECRET_KEY);
+const port = process.env.PORT || 5000;
+
 
 app.use(cors());
 app.use(express.json());
-const stripe = require("stripe")(process.env.PAYMENT_SECRET_KEY);
-const uri = process.env.DB_URI;
-const port = process.env.PORT || 5000;
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const uri = process.env.DB_URI; 
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -30,9 +30,7 @@ client.connect()
 // Connect to the database
 async function run() {
   try {
-    await client.connect();
-    console.log("Connected to MongoDB");
-
+    await client.connect()
     const menuCollection = client.db("bistroDb").collection("menu");
     const reviewCollection = client.db("bistroDb").collection("review");
     const cartCollection = client.db("bistroDb").collection("carts");
@@ -75,7 +73,7 @@ async function run() {
     };
 
     // Get menu items
-    app.get("/api/menu", async (req, res) => {
+    app.get("/menu", async (req, res) => {
       console.log("Menu endpoint hit");
       try {
         const result = await menuCollection.find().toArray();
