@@ -76,7 +76,7 @@ async function run() {
     };
 
     // Get menu items
-    app.get("/menu", async (req, res) => {
+    app.get("/api/menu", async (req, res) => {
       console.log("Menu endpoint hit");
       try {
         const result = await menuCollection.find().toArray();
@@ -89,6 +89,7 @@ async function run() {
         res.status(500).send({ error: "Failed to fetch menu items", details: error.message });
       }
     });
+    
 
     // Add a menu item (Admin only)
     app.post("/menu", verifyToken, verifyAdmin, async (req, res) => {
