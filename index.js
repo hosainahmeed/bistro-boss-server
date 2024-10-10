@@ -12,7 +12,6 @@ app.use(express.json());
 const stripe = require("stripe")(process.env.PAYMENT_SECRET_KEY);
 const uri = process.env.DB_URI;
 const port = process.env.PORT || 5000;
-console.log("db uri",uri)
 
 const client = new MongoClient(uri, {
   serverApi: {
