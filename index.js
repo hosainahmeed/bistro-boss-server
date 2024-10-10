@@ -72,6 +72,10 @@ async function run() {
       next();
     };
 
+    app.get("/test", (req, res) => {
+      res.send("Test route is working!");
+    });
+
     // Get menu items
     app.get("/menu", async (req, res) => {
       console.log("Menu endpoint hit");
