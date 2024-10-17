@@ -85,7 +85,7 @@ async function run() {
     });
 
     // Add a menu item (Admin only)
-    app.post("/menu", verifyToken, verifyAdmin, async (req, res) => {
+    app.post("/menu", async (req, res) => {
       const result = await menuCollection.insertOne(item);
       const item = req.body;
       res.send(result);
@@ -170,7 +170,7 @@ async function run() {
     );
 
     // Get all users
-    app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
+    app.get("/users",  async (req, res) => {
       try {
         const result = await usersCollection.find().toArray();
         res.send(result);
