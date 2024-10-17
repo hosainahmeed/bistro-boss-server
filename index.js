@@ -48,10 +48,11 @@ client
   .catch((err) => console.error("Failed to connect to MongoDB", err));
 
 // Connect to the database
+// Connect 
 async function run() {
   try {
     await client.connect();
-    const menuCollection = client.db("bistroDb").collection("menu");
+    const menuCollection = client.db("bistroDb").collection("menus");
     const reviewCollection = client.db("bistroDb").collection("review");
     const cartCollection = client.db("bistroDb").collection("carts");
     const usersCollection = client.db("bistroDb").collection("users");
