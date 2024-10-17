@@ -1,17 +1,36 @@
 const express = require("express");
-const app = express();
 const cors = require("cors");
-
-const jwt = require("jsonwebtoken");
 require("dotenv").config();
+const jwt = require("jsonwebtoken");
 const stripe = require("stripe")(process.env.PAYMENT_SECRET_KEY);
+const app = express();
 const port = process.env.PORT || 5000;
-
-
+//middleware
 app.use(cors());
 app.use(express.json());
+
+// JWT Verification Middleware
+
+const verifyToken = (req, res, next) => {
+  const authorization = req.headers.authorization;
+  if (!authorization) {
+    return res
+      .status(401)
+      .send({ error: true, message: "unauthorized access" });
+  }
+
+  const token = authorization.split(" ")[1];
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).send({ message: "Unauthorized access" });
+    }
+    req.decoded = decoded;
+    next();
+  });
+};
+
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-const uri = process.env.DB_URI; 
+const uri =`mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.hqozp.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -19,25 +38,26 @@ const client = new MongoClient(uri, {
     strict: true,
     deprecationErrors: true,
   },
-  ssl: true,
+  // ssl: true,
 });
 
 // Improve database connection logging
-client.connect()
+client
+  .connect()
   .then(() => console.log("Connected to MongoDB"))
-  .catch(err => console.error("Failed to connect to MongoDB", err));
+  .catch((err) => console.error("Failed to connect to MongoDB", err));
 
 // Connect to the database
 async function run() {
   try {
-    await client.connect()
+    await client.connect();
     const menuCollection = client.db("bistroDb").collection("menu");
     const reviewCollection = client.db("bistroDb").collection("review");
     const cartCollection = client.db("bistroDb").collection("carts");
     const usersCollection = client.db("bistroDb").collection("users");
     const paymentCollection = client.db("bistroDb").collection("payments");
 
-    // JWT Token Generation
+    // JWT Token Generator
     app.post("/jwt", (req, res) => {
       const user = req.body;
       const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
@@ -46,61 +66,28 @@ async function run() {
       res.send({ token });
     });
 
-    // JWT Verification Middleware
-    const verifyToken = (req, res, next) => {
-      if (!req.headers.authorization) {
-        return res.status(401).send({ message: "Unauthorized access" });
-      }
-      const token = req.headers.authorization.split(" ")[1];
-      jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
-        if (err) {
-          return res.status(401).send({ message: "Unauthorized access" });
-        }
-        req.decoded = decoded;
-        next();
-      });
-    };
-
     const verifyAdmin = async (req, res, next) => {
       const email = req.decoded.email;
       const query = { email: email };
       const user = await usersCollection.findOne(query);
-      const isAdmin = user?.role === "admin";
-      if (!isAdmin) {
+
+      if (user?.role !== "admin") {
         return res.status(403).send({ message: "Forbidden access" });
       }
       next();
     };
 
-    app.get("/test", (req, res) => {
-      res.send("Test route is working!");
-    });
-
     // Get menu items
     app.get("/menu", async (req, res) => {
-      console.log("Menu endpoint hit");
-      try {
-        const result = await menuCollection.find().toArray();
-        if (result.length === 0) {
-          return res.status(404).send({ message: "No menu items found" });
-        }
-        res.send(result);
-      } catch (error) {
-        console.error("Error fetching menu items:", error);
-        res.status(500).send({ error: "Failed to fetch menu items", details: error.message });
-      }
+      const result = await menuCollection.find().toArray();
+      res.send(result);
     });
-    
 
     // Add a menu item (Admin only)
     app.post("/menu", verifyToken, verifyAdmin, async (req, res) => {
-      try {
-        const item = req.body;
-        const result = await menuCollection.insertOne(item);
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ error: "Failed to add menu item" });
-      }
+      const result = await menuCollection.insertOne(item);
+      const item = req.body;
+      res.send(result);
     });
 
     // Delete a menu item (Admin only)
@@ -334,7 +321,6 @@ async function run() {
     console.error("Error connecting to the database", error);
   } finally {
     // Keeping the connection open for the server lifecycle
-    
   }
 }
 
@@ -344,7 +330,6 @@ run().catch(console.dir);
 app.get("/", (req, res) => {
   res.send("Server is running");
 });
-
 
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
